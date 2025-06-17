@@ -207,6 +207,24 @@ class HunyuanVideoPipeline(DiffusionPipeline):
             if accepts:
                 extra_step_kwargs[k] = v
         return extra_step_kwargs
+
+    def apply_audio_conditioning(self, prompt_embeds, audio_embeds=None):
+        if audio_embeds is None or not audio_embeds.get("has_audio", False):
+            return prompt_embeds
+        try:
+            audio_features = audio_embeds.get("audio_features")
+            audio_strength = audio_embeds.get("audio_strength", 0.8)
+            if audio_features is None or not hasattr(self.transformer, "audio_net"):
+                return prompt_embeds
+            conditioned = self.transformer.audio_net(
+                audio_features,
+                prompt_embeds,
+                audio_strength if isinstance(audio_strength, float) else audio_strength.item()
+            )
+            return conditioned
+        except Exception as e:
+            logger.error(f"Audio conditioning application failed: {e}")
+            return prompt_embeds
     
     def get_timesteps(self, num_inference_steps, strength, device):
         # get the original timestep using init_timestep
@@ -239,8 +257,9 @@ class HunyuanVideoPipeline(DiffusionPipeline):
         i2v_condition_type=None,
         image_cond_latents=None,
         i2v_stability=True,
-        
+
     ):
+        original_latents = None
         shape = (
             batch_size,
             num_channels_latents,
@@ -464,6 +483,7 @@ class HunyuanVideoPipeline(DiffusionPipeline):
         riflex_freq_index: Optional[int] = None,
         i2v_stability=True,
         loop_args: Optional[Dict] = None,
+        audio_conditioning: Optional[Dict] = None,
         **kwargs,
     ):
         r"""
@@ -592,6 +612,9 @@ class HunyuanVideoPipeline(DiffusionPipeline):
             #     prompt_mask = torch.cat([prompt_mask, prompt_mask])
             if prompt_embeds_2 is not None:
                 prompt_embeds_2 = torch.cat([prompt_embeds_2, prompt_embeds_2])
+
+        # Apply audio conditioning if provided
+        prompt_embeds = self.apply_audio_conditioning(prompt_embeds, audio_conditioning)
 
         prompt_embeds = prompt_embeds.to(device = device, dtype = self.base_dtype)
         #prompt_mask = prompt_mask.to(device)
