@@ -19,6 +19,13 @@ Also because there's been so much trouble in using the transformer model for tex
 
 Not that it does give somewhat different results and using these nodes like that can't be considered as original implementation wrapper anymore.
 
+## Audio Support
+Experimental audio-driven generation is now available. Install the optional dependencies with:
+```bash
+pip install openai-whisper librosa soundfile
+```
+Use the `HyVideoAudioLoader` and `HyVideoCustomSampler` nodes with the `hunyuancustom_audio_720P` model for audio conditioned videos.
+
 # Update 4, the non-update:
 
 

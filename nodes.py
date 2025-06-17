@@ -2045,7 +2045,8 @@ class HyVideoCustomSampler:
     def sample(self, model, conditioning, latents, steps, cfg, sampler_name,
                scheduler, seed, flow_shift, audio_embeds=None, **kwargs):
 
-        supports_audio = model.model.get("supports_audio", False)
+        supports_audio = hasattr(model.model, 'audionet')
+
         has_audio_input = audio_embeds is not None and audio_embeds.get("has_audio", False)
 
         if has_audio_input and not supports_audio:
