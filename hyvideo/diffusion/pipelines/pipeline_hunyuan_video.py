@@ -273,6 +273,7 @@ class HunyuanVideoPipeline(DiffusionPipeline):
                 f" size of {batch_size}. Make sure the batch size matches the length of the generators."
             )
         if latents is not None:
+            original_latents = latents.clone()
             latents = latents.to(device)
         else:
             original_latents = None

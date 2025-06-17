@@ -2045,8 +2045,9 @@ class HyVideoCustomSampler:
     def sample(self, model, conditioning, latents, steps, cfg, sampler_name,
                scheduler, seed, flow_shift, audio_embeds=None, **kwargs):
 
-        supports_audio = hasattr(model.model, 'audionet')
+        supports_audio = model.model.get("supports_audio", False)
         has_audio_input = audio_embeds is not None and audio_embeds.get("has_audio", False)
+
 
         device = mm.get_torch_device()
         prompt_embeds = conditioning.get("prompt_embeds")
