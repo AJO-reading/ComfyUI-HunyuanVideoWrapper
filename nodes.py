@@ -2048,7 +2048,6 @@ class HyVideoCustomSampler:
         supports_audio = hasattr(model.model, 'audionet')
         has_audio_input = audio_embeds is not None and audio_embeds.get("has_audio", False)
 
-
         device = mm.get_torch_device()
         prompt_embeds = conditioning.get("prompt_embeds")
 
