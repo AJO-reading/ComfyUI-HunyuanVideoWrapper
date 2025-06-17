@@ -257,8 +257,9 @@ class HunyuanVideoPipeline(DiffusionPipeline):
         i2v_condition_type=None,
         image_cond_latents=None,
         i2v_stability=True,
-        
+
     ):
+        original_latents = None
         shape = (
             batch_size,
             num_channels_latents,

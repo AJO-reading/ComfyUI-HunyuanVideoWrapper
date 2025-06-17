@@ -2046,12 +2046,7 @@ class HyVideoCustomSampler:
                scheduler, seed, flow_shift, audio_embeds=None, **kwargs):
 
         supports_audio = hasattr(model.model, 'audionet')
-
         has_audio_input = audio_embeds is not None and audio_embeds.get("has_audio", False)
-
-        if has_audio_input and not supports_audio:
-            log.warning("Audio input provided but model doesn't support audio. Use hunyuancustom_audio_720P model.")
-            has_audio_input = False
 
         device = mm.get_torch_device()
         prompt_embeds = conditioning.get("prompt_embeds")
