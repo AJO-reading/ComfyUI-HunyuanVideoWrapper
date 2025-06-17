@@ -2046,6 +2046,7 @@ class HyVideoCustomSampler:
                scheduler, seed, flow_shift, audio_embeds=None, **kwargs):
 
         supports_audio = hasattr(model.model, 'audionet')
+
         has_audio_input = audio_embeds is not None and audio_embeds.get("has_audio", False)
 
         if has_audio_input and not supports_audio:
