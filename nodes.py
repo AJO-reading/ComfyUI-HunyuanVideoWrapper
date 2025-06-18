@@ -1964,7 +1964,7 @@ class HyVideoAudioLoader:
             }
         }
 
-    RETURN_TYPES = ("HYVID_AUDIO_EMBEDS",)
+    RETURN_TYPES = ("HUNYUAN_AUDIO_EMBEDS",)
     RETURN_NAMES = ("audio_embeds",)
     FUNCTION = "process_audio"
     CATEGORY = "HunyuanVideoWrapper"
@@ -2033,30 +2033,38 @@ class HyVideoCustomSampler:
         return {
             "required": {
                 "model": ("HYVIDEOMODEL",),
-                "hyid_embeds": ("HYVIDEMBEDS",),
-                "samples": ("LATENT",),
-                "image_cond_latents": ("LATENT",),
-                "height": ("INT", {"default": 720, "min": 64, "max": 4096, "step": 8}),
-                "width": ("INT", {"default": 1280, "min": 64, "max": 4096, "step": 8}),
-                "num_frames": ("INT", {"default": 32, "min": 1, "max": 4096}),
-                "steps": ("INT", {"default": 30, "min": 1, "max": 10000}),
-                "cfg": ("FLOAT", {"default": 7.5, "min": 0.0, "max": 100.0, "step": 0.1, "round": 0.01}),
+                "hyvid_embeds": ("HYVIDEMBEDS", ),
+                "width": ("INT", {"default": 512, "min": 64, "max": 4096, "step": 16}),
+                "height": ("INT", {"default": 512, "min": 64, "max": 4096, "step": 16}),
+                "num_frames": ("INT", {"default": 49, "min": 1, "max": 1024, "step": 4}),
+                "steps": ("INT", {"default": 30, "min": 1}),
+                "embedded_guidance_scale": ("FLOAT", {"default": 6.0, "min": 0.0, "max": 30.0, "step": 0.01}),
+                "flow_shift": ("FLOAT", {"default": 9.0, "min": 0.0, "max": 1000.0, "step": 0.01}),
                 "seed": ("INT", {"default": 0, "min": 0, "max": 0xffffffffffffffff}),
-                "control_after_generate": ("COMBO[STRING]", ["fixed", "increment", "decrement", "randomize"]),
-                "denoise_strength": ("FLOAT", {"default": 1.0, "min": 0.0, "max": 1.0, "step": 0.01}),
-                "scheduler": (comfy.samplers.KSampler.SCHEDULERS,),
-                "i2v_mode": ("COMBO[STRING]", ["dynamic", "legacy"]),
+                "force_offload": ("BOOLEAN", {"default": True}),
+
             },
             "optional": {
-                "audio_embeds": ("LATENT",),
-                "context_options": ("HYVIDCONTEXT",),
-                "feta_args": ("FETAARGS",),
-                "loop_args": ("LOOPARGS",),
-                "tencache_args": ("TEACACHEARGS",),
-                "focasc_args": ("FRESCA_ARGS",),
-                "mask": ("MASK",),
-                "force_offload": ("BOOLEAN", {"default": False}),
-            },
+                "samples": ("LATENT", {"tooltip": "init Latents to use for video2video process"} ),
+                "image_cond_latents": ("LATENT", {"tooltip": "init Latents to use for image2video process"} ),
+                #"neg_image_cond_latents": ("LATENT", {"tooltip": "init Latents to use for image2video process"} ),
+                "denoise_strength": ("FLOAT", {"default": 1.0, "min": 0.0, "max": 1.0, "step": 0.01}),
+                "stg_args": ("STGARGS", ),
+                "context_options": ("HYVIDCONTEXT", ),
+                "feta_args": ("FETAARGS", ),
+                "teacache_args": ("TEACACHEARGS", ),
+                "scheduler": (available_schedulers,
+                    {
+                        "default": 'FlowMatchDiscreteScheduler'
+                    }),
+                "riflex_freq_index": ("INT", {"default": 0, "min": 0, "max": 1000, "step": 1, "tooltip": "Frequency index for RIFLEX, disabled when 0, default 4. Allows for new frames to be generated after 129 without looping"}),
+                "i2v_mode": (["stability", "dynamic"], {"default": "dynamic", "tooltip": "I2V mode for image2video process"}),
+                "loop_args": ("LOOPARGS", ),
+                "fresca_args": ("FRESCA_ARGS", ),
+                "slg_args": ("SLGARGS", ),
+                "mask": ("MASK", ),
+                "audio_embeds": ("HUNYUAN_AUDIO_EMBEDS",),
+            }
         }
 
     RETURN_TYPES = ("LATENT",)
@@ -2067,27 +2075,30 @@ class HyVideoCustomSampler:
     def sample(
         self,
         model,
-        hyid_embeds,
-        samples,
-        image_cond_latents,
-        height,
+        hyvid_embeds,
         width,
+        height,
         num_frames,
         steps,
-        cfg,
+        embedded_guidance_scale,
+        flow_shift,
         seed,
-        control_after_generate,
-        denoise_strength,
-        scheduler,
-        i2v_mode,
-        audio_embeds=None,
+        force_offload=True,
+        samples=None,
+        denoise_strength=1.0,
+        stg_args=None,
         context_options=None,
         feta_args=None,
+        teacache_args=None,
+        scheduler=None,
+        image_cond_latents=None,
+        riflex_freq_index=0,
+        i2v_mode="dynamic",
         loop_args=None,
-        tencache_args=None,
-        focasc_args=None,
+        fresca_args=None,
+        slg_args=None,
         mask=None,
-        force_offload=False,
+        audio_embeds=None,
     ):
 
         actual_model = model["model"]
@@ -2103,14 +2114,15 @@ class HyVideoCustomSampler:
             "height": height,
             "width": width,
             "video_length": num_frames,
-            "prompt_embed_dict": hyid_embeds,
+            "prompt_embed_dict": hyvid_embeds,
             "num_inference_steps": steps,
-            "guidance_scale": cfg,
+            "guidance_scale": embedded_guidance_scale,
             "generator": torch.Generator(device=mm.get_torch_device()).manual_seed(seed),
             "latents": samples,
             "image_cond_latents": image_cond_latents,
             "denoise_strength": denoise_strength,
             "scheduler": scheduler,
+            "flow_shift": flow_shift,
             "i2v_stability": i2v_mode == "stability",
             "context_options": context_options,
             "feta_args": feta_args,
@@ -2126,11 +2138,9 @@ class HyVideoCustomSampler:
         if isinstance(result, dict) and "samples" in result:
             result = result["samples"]
 
-        new_seed = comfy.utils.get_next_seed(seed, control_after_generate)
-        self.last_seed = new_seed
+        self.last_seed = seed
 
         return (result,)
-
 
 NODE_CLASS_MAPPINGS = {
     "HyVideoSampler": HyVideoSampler,
