@@ -2044,6 +2044,9 @@ class HyVideoCustomSampler(HyVideoSampler):
         if embedded_guidance_scale is not None:
             kwargs["embedded_guidance_scale"] = embedded_guidance_scale
 
+        # Remove custom arguments the parent sampler does not expect
+        kwargs.pop("audio_embeds", None)
+
         model_pkg = kwargs.get("model") or (args[0] if args else None)
         if model_pkg is None:
             raise ValueError("No model package provided to sampler")
