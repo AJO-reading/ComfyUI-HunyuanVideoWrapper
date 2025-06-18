@@ -520,9 +520,14 @@ class HyVideoModelLoader:
 
         for model in mm.current_loaded_models:
             if model._model() == patcher:
-                mm.current_loaded_models.remove(model)            
+                mm.current_loaded_models.remove(model)
 
-        return (patcher,)
+        model_package = {
+            "model": patcher,
+            "supports_audio": audio_support,
+        }
+
+        return (model_package,)
 
 #region load VAE
 
@@ -842,7 +847,8 @@ class HyVideoTextEncode:
 
         if model_to_offload is not None:
             log.info(f"Moving video model to {offload_device}...")
-            model_to_offload.model.to(offload_device)
+            m_to_offload = model_to_offload["model"] if isinstance(model_to_offload, dict) else model_to_offload
+            m_to_offload.model.to(offload_device)
 
         text_encoder_1 = text_encoders["text_encoder"]
         if clip_l is None:
@@ -1358,7 +1364,11 @@ class HyVideoSampler:
     def process(self, model, hyvid_embeds, flow_shift, steps, embedded_guidance_scale, seed, width, height, num_frames,
                 samples=None, denoise_strength=1.0, force_offload=True, stg_args=None, context_options=None, feta_args=None,
                 teacache_args=None, scheduler=None, image_cond_latents=None, neg_image_cond_latents=None, riflex_freq_index=0, i2v_mode="stability", loop_args=None, fresca_args=None, slg_args=None, mask=None, audio_conditioning=None):
-        model = model.model
+        if isinstance(model, dict):
+            model_patcher = model["model"]
+        else:
+            model_patcher = model
+        model = model_patcher.model
 
         device = mm.get_torch_device()
         offload_device = mm.unet_offload_device()
@@ -2045,7 +2055,13 @@ class HyVideoCustomSampler:
     def sample(self, model, conditioning, latents, steps, cfg, sampler_name,
                scheduler, seed, flow_shift, audio_embeds=None, **kwargs):
 
-        supports_audio = model.model.get("supports_audio", False)
+        if isinstance(model, dict):
+            actual_model = model["model"]
+            supports_audio = model.get("supports_audio", False)
+        else:
+            actual_model = model
+            supports_audio = getattr(model.model, "supports_audio", False)
+
         has_audio_input = audio_embeds is not None and audio_embeds.get("has_audio", False)
 
 
@@ -2054,7 +2070,10 @@ class HyVideoCustomSampler:
 
         if has_audio_input and supports_audio and prompt_embeds is not None:
             try:
-                audio_net = model.model.get("audio_net")
+                try:
+                    audio_net = actual_model.model["audio_net"]
+                except Exception:
+                    audio_net = None
                 if audio_net is not None:
                     audio_features = audio_embeds["audio_features"]
                     audio_strength = audio_embeds["audio_strength"].item()
