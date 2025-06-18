@@ -2032,28 +2032,30 @@ class HyVideoCustomSampler(HyVideoSampler):
 
     FUNCTION = "sample"
 
+    @classmethod
+    def INPUT_TYPES(cls):
+        data = super().INPUT_TYPES()
+        if "optional" not in data:
+            data["optional"] = {}
+        data["optional"]["audio_embeds"] = ("HUNYUAN_AUDIO_EMBEDS",)
+        return data
+
     def sample(self, *args, audio_embeds=None, embedded_guidance_scale=None, **kwargs):
         if embedded_guidance_scale is not None:
             kwargs["embedded_guidance_scale"] = embedded_guidance_scale
 
-        model_pkg = kwargs.get("model", args[0] if args else None)
-        if isinstance(model_pkg, dict) and "model" in model_pkg:
-            actual_model = model_pkg["model"]
-            supports_audio = model_pkg.get("supports_audio", False)
-        else:
-            actual_model = model_pkg
-            supports_audio = getattr(actual_model, "supports_audio", False)
+        model_pkg = kwargs.get("model", args[0])
+        actual_model = model_pkg["model"] if isinstance(model_pkg, dict) else model_pkg
+        supports_audio = model_pkg["supports_audio"] if isinstance(model_pkg, dict) else getattr(actual_model, "supports_audio", False)
 
         if audio_embeds is not None and not supports_audio:
-            print("[HyVideoCustomSampler] Audio ignored \u2013 model lacks AudioNet")
             audio_embeds = None
 
         kwargs["model"] = actual_model
-        if audio_embeds is not None:
-            kwargs["audio_conditioning"] = audio_embeds
+        kwargs["audio_embeds"] = audio_embeds
+        kwargs["audio_condition"] = audio_embeds is not None
 
         return super().process(*args, **kwargs)
-
 
 NODE_CLASS_MAPPINGS = {
     "HyVideoSampler": HyVideoSampler,
