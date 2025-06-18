@@ -2027,126 +2027,33 @@ class HyVideoAudioLoader:
                 "audio_condition": False
             },)
 
-class HyVideoCustomSampler:
-    @classmethod
-    def INPUT_TYPES(s):
-        return {
-            "required": {
-                "model": ("HYVIDEOMODEL",),
-                "hyvid_embeds": ("HYVIDEMBEDS", ),
-                "width": ("INT", {"default": 512, "min": 64, "max": 4096, "step": 16}),
-                "height": ("INT", {"default": 512, "min": 64, "max": 4096, "step": 16}),
-                "num_frames": ("INT", {"default": 49, "min": 1, "max": 1024, "step": 4}),
-                "steps": ("INT", {"default": 30, "min": 1}),
-                "embedded_guidance_scale": ("FLOAT", {"default": 6.0, "min": 0.0, "max": 30.0, "step": 0.01}),
-                "flow_shift": ("FLOAT", {"default": 9.0, "min": 0.0, "max": 1000.0, "step": 0.01}),
-                "seed": ("INT", {"default": 0, "min": 0, "max": 0xffffffffffffffff}),
-                "force_offload": ("BOOLEAN", {"default": True}),
+class HyVideoCustomSampler(HyVideoSampler):
+    """Wrapper sampler that adds optional audio support."""
 
-            },
-            "optional": {
-                "samples": ("LATENT", {"tooltip": "init Latents to use for video2video process"} ),
-                "image_cond_latents": ("LATENT", {"tooltip": "init Latents to use for image2video process"} ),
-                #"neg_image_cond_latents": ("LATENT", {"tooltip": "init Latents to use for image2video process"} ),
-                "denoise_strength": ("FLOAT", {"default": 1.0, "min": 0.0, "max": 1.0, "step": 0.01}),
-                "stg_args": ("STGARGS", ),
-                "context_options": ("HYVIDCONTEXT", ),
-                "feta_args": ("FETAARGS", ),
-                "teacache_args": ("TEACACHEARGS", ),
-                "scheduler": (available_schedulers,
-                    {
-                        "default": 'FlowMatchDiscreteScheduler'
-                    }),
-                "riflex_freq_index": ("INT", {"default": 0, "min": 0, "max": 1000, "step": 1, "tooltip": "Frequency index for RIFLEX, disabled when 0, default 4. Allows for new frames to be generated after 129 without looping"}),
-                "i2v_mode": (["stability", "dynamic"], {"default": "dynamic", "tooltip": "I2V mode for image2video process"}),
-                "loop_args": ("LOOPARGS", ),
-                "fresca_args": ("FRESCA_ARGS", ),
-                "slg_args": ("SLGARGS", ),
-                "mask": ("MASK", ),
-                "audio_embeds": ("HUNYUAN_AUDIO_EMBEDS",),
-            }
-        }
-
-    RETURN_TYPES = ("LATENT",)
     FUNCTION = "sample"
-    CATEGORY = "HunyuanVideoWrapper"
-    DESCRIPTION = "Enhanced sampler with HunyuanCustom audio support"
 
-    def sample(
-        self,
-        model,
-        hyid_embeds,
-        samples,
-        image_cond_latents,
-        height,
-        width,
-        num_frames,
-        steps,
-        embedded_guidance_scale,
-        seed,
-        control_after_generate,
-        denoise_strength,
-        scheduler,
-        i2v_mode,
-        audio_embeds=None,
-        context_options=None,
-        fsctrl_args=None,
-        loop_args=None,
-        teacache_args=None,
-        focasc_args=None,
-        mask=None,
-        force_offload=False,
-        **extra_kwargs,
-    ):
+    def sample(self, *args, audio_embeds=None, embedded_guidance_scale=None, **kwargs):
+        if embedded_guidance_scale is not None:
+            kwargs["embedded_guidance_scale"] = embedded_guidance_scale
 
-        actual_model = model["model"]
-        supports_audio = model["supports_audio"]
-
-        cfg = float(hyid_embeds.get("cfg", 1.0))
+        model_pkg = kwargs.get("model", args[0] if args else None)
+        if isinstance(model_pkg, dict) and "model" in model_pkg:
+            actual_model = model_pkg["model"]
+            supports_audio = model_pkg.get("supports_audio", False)
+        else:
+            actual_model = model_pkg
+            supports_audio = getattr(actual_model, "supports_audio", False)
 
         if audio_embeds is not None and not supports_audio:
-            log.warning("Audio input provided, but the loaded model does not support audio. Ignoring audio.")
+            print("[HyVideoCustomSampler] Audio ignored \u2013 model lacks AudioNet")
             audio_embeds = None
 
-        audio_condition = audio_embeds is not None
+        kwargs["model"] = actual_model
+        if audio_embeds is not None:
+            kwargs["audio_conditioning"] = audio_embeds
 
-        pipe_kwargs = {
-            "model": actual_model,
-            "hyid_embeds": hyid_embeds,
-            "samples": samples,
-            "image_cond_latents": image_cond_latents,
-            "height": height,
-            "width": width,
-            "num_frames": num_frames,
-            "inference_steps": steps,
-            "guidance_scale": cfg,
-            "embedded_guidance_scale": embedded_guidance_scale,
-            "seed": seed,
-            "denoise_strength": denoise_strength,
-            "scheduler": scheduler,
-            "i2v_mode": i2v_mode,
-            "context_options": context_options,
-            "fsctrl_args": fsctrl_args,
-            "loop_args": loop_args,
-            "teacache_args": teacache_args,
-            "focasc_args": focasc_args,
-            "mask": mask,
-            "force_offload": force_offload,
-            "audio_embeds": audio_embeds,
-            "audio_condition": audio_condition,
-        }
+        return super().process(*args, **kwargs)
 
-        pipe_kwargs.update(extra_kwargs)
-
-        result = self.pipe(**pipe_kwargs)
-
-        if "samples" in result:
-            result = result["samples"]
-
-        new_seed = comfy.utils.get_next_seed(seed, control_after_generate)
-        self.last_seed = new_seed
-
-        return (result, )
 
 NODE_CLASS_MAPPINGS = {
     "HyVideoSampler": HyVideoSampler,
