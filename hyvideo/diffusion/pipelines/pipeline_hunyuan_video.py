@@ -772,7 +772,8 @@ class HunyuanVideoPipeline(DiffusionPipeline):
             self.transformer.slg_single_blocks = self.transformer.slg_double_blocks = None
         
         logger.info(f"Sampling {video_length} frames in {latents.shape[2]} latents at {width}x{height} with {len(timesteps)} inference steps")
-    
+
+        uncond_ref_latents = None
         comfy_pbar = ProgressBar(len(timesteps))
         with self.progress_bar(total=len(timesteps)) as progress_bar:
             for i, t in enumerate(timesteps):
