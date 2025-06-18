@@ -459,6 +459,8 @@ class HunyuanVideoPipeline(DiffusionPipeline):
         generator: Optional[Union[torch.Generator, List[torch.Generator]]] = None,
         latents: Optional[torch.Tensor] = None,
         mask_latents: Optional[torch.Tensor] = None,
+        audio_embeds: Optional[Dict] = None,
+        audio_condition: bool = False,
         cross_attention_kwargs: Optional[Dict[str, Any]] = None,
         guidance_rescale: float = 0.0,
         clip_skip: Optional[int] = None,
@@ -613,6 +615,8 @@ class HunyuanVideoPipeline(DiffusionPipeline):
             #     prompt_mask = torch.cat([prompt_mask, prompt_mask])
             if prompt_embeds_2 is not None:
                 prompt_embeds_2 = torch.cat([prompt_embeds_2, prompt_embeds_2])
+
+        audio_conditioning = audio_embeds if audio_condition else None
 
         # Apply audio conditioning if provided
         prompt_embeds = self.apply_audio_conditioning(prompt_embeds, audio_conditioning)

@@ -2033,18 +2033,30 @@ class HyVideoCustomSampler:
         return {
             "required": {
                 "model": ("HYVIDEOMODEL",),
-                "conditioning": ("HYVIDEMBEDS",),
-                "latents": ("LATENT",),
-                "steps": ("INT", {"default": 30, "min": 1, "max": 300}),
-                "cfg": ("FLOAT", {"default": 7.5, "min": 0.0, "max": 30.0}),
-                "sampler_name": (available_schedulers, {"default": "FlowMatchDiscreteScheduler"}),
-                "scheduler": ("SAMPLER",),
+                "hyid_embeds": ("HYVIDEMBEDS",),
+                "samples": ("LATENT",),
+                "image_cond_latents": ("LATENT",),
+                "height": ("INT", {"default": 720, "min": 64, "max": 4096, "step": 8}),
+                "width": ("INT", {"default": 1280, "min": 64, "max": 4096, "step": 8}),
+                "num_frames": ("INT", {"default": 32, "min": 1, "max": 4096}),
+                "steps": ("INT", {"default": 30, "min": 1, "max": 10000}),
+                "cfg": ("FLOAT", {"default": 7.5, "min": 0.0, "max": 100.0, "step": 0.1, "round": 0.01}),
                 "seed": ("INT", {"default": 0, "min": 0, "max": 0xffffffffffffffff}),
-                "flow_shift": ("FLOAT", {"default": 7.0, "min": 0.0, "max": 30.0}),
+                "control_after_generate": ("COMBO[STRING]", ["fixed", "increment", "decrement", "randomize"]),
+                "denoise_strength": ("FLOAT", {"default": 1.0, "min": 0.0, "max": 1.0, "step": 0.01}),
+                "scheduler": (comfy.samplers.KSampler.SCHEDULERS,),
+                "i2v_mode": ("COMBO[STRING]", ["dynamic", "legacy"]),
             },
             "optional": {
-                "audio_embeds": ("HYVID_AUDIO_EMBEDS", {"tooltip": "Audio conditioning from HyVideoAudioLoader"}),
-            }
+                "audio_embeds": ("LATENT",),
+                "context_options": ("HYVIDCONTEXT",),
+                "feta_args": ("FETAARGS",),
+                "loop_args": ("LOOPARGS",),
+                "tencache_args": ("TEACACHEARGS",),
+                "focasc_args": ("FRESCA_ARGS",),
+                "mask": ("MASK",),
+                "force_offload": ("BOOLEAN", {"default": False}),
+            },
         }
 
     RETURN_TYPES = ("LATENT",)
@@ -2052,59 +2064,73 @@ class HyVideoCustomSampler:
     CATEGORY = "HunyuanVideoWrapper"
     DESCRIPTION = "Enhanced sampler with HunyuanCustom audio support"
 
-    def sample(self, model, conditioning, latents, steps, cfg, sampler_name,
-               scheduler, seed, flow_shift, audio_embeds=None, **kwargs):
+    def sample(
+        self,
+        model,
+        hyid_embeds,
+        samples,
+        image_cond_latents,
+        height,
+        width,
+        num_frames,
+        steps,
+        cfg,
+        seed,
+        control_after_generate,
+        denoise_strength,
+        scheduler,
+        i2v_mode,
+        audio_embeds=None,
+        context_options=None,
+        feta_args=None,
+        loop_args=None,
+        tencache_args=None,
+        focasc_args=None,
+        mask=None,
+        force_offload=False,
+    ):
 
-        if isinstance(model, dict):
-            actual_model = model["model"]
-            supports_audio = model.get("supports_audio", False)
-        else:
-            actual_model = model
-            supports_audio = getattr(model.model, "supports_audio", False)
+        actual_model = model["model"]
+        supports_audio = model["supports_audio"]
 
-        has_audio_input = audio_embeds is not None and audio_embeds.get("has_audio", False)
+        if audio_embeds is not None and not supports_audio:
+            log.warning("Audio input provided, but the loaded model does not support audio. Ignoring audio.")
+            audio_embeds = None
 
+        audio_condition = audio_embeds is not None
 
-        device = mm.get_torch_device()
-        prompt_embeds = conditioning.get("prompt_embeds")
+        pipe_kwargs = {
+            "height": height,
+            "width": width,
+            "video_length": num_frames,
+            "prompt_embed_dict": hyid_embeds,
+            "num_inference_steps": steps,
+            "guidance_scale": cfg,
+            "generator": torch.Generator(device=mm.get_torch_device()).manual_seed(seed),
+            "latents": samples,
+            "image_cond_latents": image_cond_latents,
+            "denoise_strength": denoise_strength,
+            "scheduler": scheduler,
+            "i2v_stability": i2v_mode == "stability",
+            "context_options": context_options,
+            "feta_args": feta_args,
+            "loop_args": loop_args,
+            "teacache_args": tencache_args,
+            "fresca_args": focasc_args,
+            "mask_latents": mask,
+            "audio_embeds": audio_embeds,
+            "audio_condition": audio_condition,
+        }
 
-        if has_audio_input and supports_audio and prompt_embeds is not None:
-            try:
-                try:
-                    audio_net = actual_model.model["audio_net"]
-                except Exception:
-                    audio_net = None
-                if audio_net is not None:
-                    audio_features = audio_embeds["audio_features"]
-                    audio_strength = audio_embeds["audio_strength"].item()
+        result = actual_model["pipe"](**pipe_kwargs)
+        if isinstance(result, dict) and "samples" in result:
+            result = result["samples"]
 
-                    audio_conditioned = audio_net(
-                        audio_features=audio_features,
-                        video_features=prompt_embeds,
-                        audio_strength=audio_strength
-                    )
+        new_seed = comfy.utils.get_next_seed(seed, control_after_generate)
+        self.last_seed = new_seed
 
-                    conditioning = conditioning.copy()
-                    conditioning["prompt_embeds"] = audio_conditioned
-                    log.info(f"Applied audio conditioning with strength {audio_strength}")
-            except Exception as e:
-                log.error(f"Audio conditioning failed: {e}")
+        return (result,)
 
-        return HyVideoSampler().process(
-            model=model,
-            hyvid_embeds=conditioning,
-            width=latents.get("width", 512),
-            height=latents.get("height", 512),
-            num_frames=latents.get("num_frames", 49),
-            steps=steps,
-            embedded_guidance_scale=cfg,
-            flow_shift=flow_shift,
-            seed=seed,
-            samples=latents,
-            scheduler=sampler_name,
-            teacache_args=None,
-            audio_conditioning=audio_embeds,
-        )
 
 NODE_CLASS_MAPPINGS = {
     "HyVideoSampler": HyVideoSampler,
