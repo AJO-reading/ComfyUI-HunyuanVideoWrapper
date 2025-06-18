@@ -2096,6 +2096,7 @@ class HyVideoCustomSampler:
         focasc_args=None,
         mask=None,
         force_offload=False,
+
     ):
 
         actual_model = model["model"]
@@ -2128,6 +2129,7 @@ class HyVideoCustomSampler:
             "focasc_args": focasc_args,
             "mask": mask,
             "force_offload": force_offload,
+
             "audio_embeds": audio_embeds,
             "audio_condition": audio_condition,
         }
