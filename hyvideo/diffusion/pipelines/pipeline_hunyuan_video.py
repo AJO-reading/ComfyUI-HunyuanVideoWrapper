@@ -486,6 +486,7 @@ class HunyuanVideoPipeline(DiffusionPipeline):
         riflex_freq_index: Optional[int] = None,
         i2v_stability=True,
         loop_args: Optional[Dict] = None,
+        audio_conditioning: Optional[Dict] = None,
         **kwargs,
     ):
         r"""
