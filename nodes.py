@@ -2055,12 +2055,16 @@ class HyVideoCustomSampler(HyVideoSampler):
             else getattr(actual_model, "supports_audio", False)
         )
 
-        if audio_embeds is not None and not supports_audio:
-            audio_embeds = None
+        audio_conditioning = None
+        if audio_embeds is not None:
+            if supports_audio:
+                audio_conditioning = audio_embeds
+            else:
+                log.warning("Audio input provided but model doesn't support audio. Ignoring audio input.")
 
         kwargs["model"] = actual_model
-        kwargs["audio_embeds"] = audio_embeds
-        kwargs["audio_condition"] = audio_embeds is not None
+        if audio_conditioning is not None:
+            kwargs["audio_conditioning"] = audio_conditioning
 
         return super().process(*args, **kwargs)
 
