@@ -2044,9 +2044,16 @@ class HyVideoCustomSampler(HyVideoSampler):
         if embedded_guidance_scale is not None:
             kwargs["embedded_guidance_scale"] = embedded_guidance_scale
 
-        model_pkg = kwargs.get("model", args[0])
+        model_pkg = kwargs.get("model") or (args[0] if args else None)
+        if model_pkg is None:
+            raise ValueError("No model package provided to sampler")
+
         actual_model = model_pkg["model"] if isinstance(model_pkg, dict) else model_pkg
-        supports_audio = model_pkg["supports_audio"] if isinstance(model_pkg, dict) else getattr(actual_model, "supports_audio", False)
+        supports_audio = (
+            model_pkg.get("supports_audio", False)
+            if isinstance(model_pkg, dict)
+            else getattr(actual_model, "supports_audio", False)
+        )
 
         if audio_embeds is not None and not supports_audio:
             audio_embeds = None
