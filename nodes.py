@@ -2054,6 +2054,7 @@ class HyVideoCustomSampler(HyVideoSampler):
 
         return super().process(*args, **kwargs)
 
+
 NODE_CLASS_MAPPINGS = {
     "HyVideoSampler": HyVideoSampler,
     "HyVideoDecode": HyVideoDecode,
