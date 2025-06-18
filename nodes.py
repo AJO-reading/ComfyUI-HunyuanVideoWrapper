@@ -2075,30 +2075,28 @@ class HyVideoCustomSampler:
     def sample(
         self,
         model,
-        hyvid_embeds,
-        width,
+        hyid_embeds,
+        samples,
+        image_cond_latents,
         height,
+        width,
         num_frames,
         steps,
-        embedded_guidance_scale,
-        flow_shift,
+        cfg,
         seed,
-        force_offload=True,
-        samples=None,
-        denoise_strength=1.0,
-        stg_args=None,
-        context_options=None,
-        feta_args=None,
-        teacache_args=None,
-        scheduler=None,
-        image_cond_latents=None,
-        riflex_freq_index=0,
-        i2v_mode="dynamic",
-        loop_args=None,
-        fresca_args=None,
-        slg_args=None,
-        mask=None,
+        control_after_generate,
+        denoise_strength,
+        scheduler,
+        i2v_mode,
         audio_embeds=None,
+        context_options=None,
+        fsctrl_args=None,
+        loop_args=None,
+        teacache_args=None,
+        focasc_args=None,
+        mask=None,
+        force_offload=False,
+
     ):
 
         actual_model = model["model"]
@@ -2111,36 +2109,40 @@ class HyVideoCustomSampler:
         audio_condition = audio_embeds is not None
 
         pipe_kwargs = {
+            "model": actual_model,
+            "hyid_embeds": hyid_embeds,
+            "samples": samples,
+            "image_cond_latents": image_cond_latents,
             "height": height,
             "width": width,
-            "video_length": num_frames,
-            "prompt_embed_dict": hyvid_embeds,
-            "num_inference_steps": steps,
-            "guidance_scale": embedded_guidance_scale,
-            "generator": torch.Generator(device=mm.get_torch_device()).manual_seed(seed),
-            "latents": samples,
-            "image_cond_latents": image_cond_latents,
+            "num_frames": num_frames,
+            "inference_steps": steps,
+            "guidance_scale": cfg,
+            "seed": seed,
             "denoise_strength": denoise_strength,
             "scheduler": scheduler,
-            "flow_shift": flow_shift,
-            "i2v_stability": i2v_mode == "stability",
+            "i2v_mode": i2v_mode,
             "context_options": context_options,
-            "feta_args": feta_args,
+            "fsctrl_args": fsctrl_args,
             "loop_args": loop_args,
             "teacache_args": teacache_args,
-            "fresca_args": focasc_args,
-            "mask_latents": mask,
+            "focasc_args": focasc_args,
+            "mask": mask,
+            "force_offload": force_offload,
+
             "audio_embeds": audio_embeds,
             "audio_condition": audio_condition,
         }
 
-        result = actual_model["pipe"](**pipe_kwargs)
-        if isinstance(result, dict) and "samples" in result:
+        result = self.pipe(**pipe_kwargs)
+
+        if "samples" in result:
             result = result["samples"]
 
-        self.last_seed = seed
+        new_seed = comfy.utils.get_next_seed(seed, control_after_generate)
+        self.last_seed = new_seed
 
-        return (result,)
+        return (result, )
 
 NODE_CLASS_MAPPINGS = {
     "HyVideoSampler": HyVideoSampler,
