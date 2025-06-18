@@ -39,6 +39,15 @@ from comfy.utils import load_torch_file, save_torch_file
 from comfy.clip_vision import clip_preprocess
 import comfy.model_base
 import comfy.latent_formats
+try:
+    import librosa
+    import soundfile as sf
+    AUDIO_AVAILABLE = True
+except ImportError:
+    AUDIO_AVAILABLE = False
+    print("Audio dependencies not available. Install with: pip install librosa soundfile")
+
+from pathlib import Path
 
 script_directory = os.path.dirname(os.path.abspath(__file__))
 
@@ -327,6 +336,23 @@ class HyVideoModelLoader:
         model_path = folder_paths.get_full_path_or_raise("diffusion_models", model)
         sd = load_torch_file(model_path, device=transformer_load_device, safe_load=True)
 
+        is_audio_model = "audio" in model.lower() or any(
+            isinstance(key, str) and key.startswith("audio_") for key in sd.keys()
+        )
+        if is_audio_model:
+            log.info("Audio-capable HunyuanCustom model detected")
+            try:
+                from .hyvideo.audio_encoder import AudioNet
+                audio_net = AudioNet().to(device, dtype=base_dtype)
+                audio_support = True
+            except Exception as e:
+                log.warning(f"Failed to initialize AudioNet: {e}")
+                audio_net = None
+                audio_support = False
+        else:
+            audio_net = None
+            audio_support = False
+
         in_channels = sd["img_in.proj.weight"].shape[1]
         if in_channels == 16 and "i2v" in model.lower():
             i2v_condition_type = "token_replace"
@@ -489,12 +515,19 @@ class HyVideoModelLoader:
         patcher.model["block_swap_args"] = block_swap_args
         patcher.model["auto_cpu_offload"] = auto_cpu_offload
         patcher.model["scheduler_config"] = scheduler_config
+        patcher.model["audio_net"] = audio_net
+        patcher.model["supports_audio"] = audio_support
 
         for model in mm.current_loaded_models:
             if model._model() == patcher:
-                mm.current_loaded_models.remove(model)            
+                mm.current_loaded_models.remove(model)
 
-        return (patcher,)
+        model_package = {
+            "model": patcher,
+            "supports_audio": audio_support,
+        }
+
+        return (model_package,)
 
 #region load VAE
 
@@ -814,7 +847,8 @@ class HyVideoTextEncode:
 
         if model_to_offload is not None:
             log.info(f"Moving video model to {offload_device}...")
-            model_to_offload.model.to(offload_device)
+            m_to_offload = model_to_offload["model"] if isinstance(model_to_offload, dict) else model_to_offload
+            m_to_offload.model.to(offload_device)
 
         text_encoder_1 = text_encoders["text_encoder"]
         if clip_l is None:
@@ -1327,10 +1361,14 @@ class HyVideoSampler:
     FUNCTION = "process"
     CATEGORY = "HunyuanVideoWrapper"
 
-    def process(self, model, hyvid_embeds, flow_shift, steps, embedded_guidance_scale, seed, width, height, num_frames, 
-                samples=None, denoise_strength=1.0, force_offload=True, stg_args=None, context_options=None, feta_args=None, 
-                teacache_args=None, scheduler=None, image_cond_latents=None, neg_image_cond_latents=None, riflex_freq_index=0, i2v_mode="stability", loop_args=None, fresca_args=None, slg_args=None, mask=None):
-        model = model.model
+    def process(self, model, hyvid_embeds, flow_shift, steps, embedded_guidance_scale, seed, width, height, num_frames,
+                samples=None, denoise_strength=1.0, force_offload=True, stg_args=None, context_options=None, feta_args=None,
+                teacache_args=None, scheduler=None, image_cond_latents=None, neg_image_cond_latents=None, riflex_freq_index=0, i2v_mode="stability", loop_args=None, fresca_args=None, slg_args=None, mask=None, audio_conditioning=None):
+        if isinstance(model, dict):
+            model_patcher = model["model"]
+        else:
+            model_patcher = model
+        model = model_patcher.model
 
         device = mm.get_torch_device()
         offload_device = mm.unet_offload_device()
@@ -1506,6 +1544,7 @@ class HyVideoSampler:
             riflex_freq_index = riflex_freq_index,
             i2v_stability = i2v_stability,
             loop_args = loop_args,
+            audio_conditioning = audio_conditioning,
         )
 
         print_memory(device)
@@ -1899,6 +1938,199 @@ class HyVideoLatentPreview:
 
         return (latent_images.float().cpu(), out_factors)
 
+class HyVideoAudioLoader:
+    @classmethod
+    def INPUT_TYPES(s):
+        return {
+            "required": {
+                "audio": ("AUDIO", {"tooltip": "Audio input for driving video generation"}),
+            },
+            "optional": {
+                "audio_strength": ("FLOAT", {
+                    "default": 0.8,
+                    "min": 0.0,
+                    "max": 1.0,
+                    "step": 0.01,
+                    "tooltip": "Strength of audio conditioning"
+                }),
+                "whisper_model": (["tiny", "base", "small", "medium"], {
+                    "default": "tiny",
+                    "tooltip": "Whisper model size"
+                }),
+                "enable_audio": ("BOOLEAN", {
+                    "default": True,
+                    "tooltip": "Enable audio conditioning"
+                }),
+            }
+        }
+
+    RETURN_TYPES = ("HYVID_AUDIO_EMBEDS",)
+    RETURN_NAMES = ("audio_embeds",)
+    FUNCTION = "process_audio"
+    CATEGORY = "HunyuanVideoWrapper"
+    DESCRIPTION = "Process audio for HunyuanCustom audio-driven generation"
+
+    def process_audio(self, audio, audio_strength=0.8, whisper_model="tiny", enable_audio=True):
+        if not enable_audio or not AUDIO_AVAILABLE:
+            return ({
+                "audio_features": None,
+                "audio_strength": torch.tensor(0.0),
+                "has_audio": False,
+                "audio_condition": False
+            },)
+
+        try:
+            from .hyvideo.audio_encoder import WhisperAudioEncoder, create_audio_conditioning
+        except ImportError as e:
+            log.error(f"Failed to import audio encoder: {e}")
+            return ({
+                "audio_features": None,
+                "audio_strength": torch.tensor(0.0),
+                "has_audio": False,
+                "audio_condition": False
+            },)
+
+        device = mm.get_torch_device()
+
+        try:
+            audio_encoder = WhisperAudioEncoder(model_name=whisper_model, device=device)
+
+            if isinstance(audio, dict) and "waveform" in audio:
+                waveform = audio["waveform"]
+                if isinstance(waveform, torch.Tensor):
+                    audio_data = waveform.cpu().numpy()
+                    if audio_data.ndim > 1:
+                        audio_data = audio_data.mean(axis=0)
+                else:
+                    audio_data = waveform
+                audio_features = audio_encoder.extract_features(audio_data)
+            else:
+                audio_features = audio_encoder.extract_features(audio)
+
+            audio_embeds = create_audio_conditioning(
+                audio_features=audio_features,
+                audio_strength=audio_strength,
+                device=device
+            )
+
+            del audio_encoder
+            mm.soft_empty_cache()
+
+            return (audio_embeds,)
+
+        except Exception as e:
+            log.error(f"Audio processing failed: {e}")
+            return ({
+                "audio_features": None,
+                "audio_strength": torch.tensor(0.0),
+                "has_audio": False,
+                "audio_condition": False
+            },)
+
+class HyVideoCustomSampler:
+    @classmethod
+    def INPUT_TYPES(s):
+        return {
+            "required": {
+                "model": ("HYVIDEOMODEL",),
+                "hyid_embeds": ("HYVIDEMBEDS",),
+                "samples": ("LATENT",),
+                "image_cond_latents": ("LATENT",),
+                "height": ("INT", {"default": 720, "min": 64, "max": 4096, "step": 8}),
+                "width": ("INT", {"default": 1280, "min": 64, "max": 4096, "step": 8}),
+                "num_frames": ("INT", {"default": 32, "min": 1, "max": 4096}),
+                "steps": ("INT", {"default": 30, "min": 1, "max": 10000}),
+                "cfg": ("FLOAT", {"default": 7.5, "min": 0.0, "max": 100.0, "step": 0.1, "round": 0.01}),
+                "seed": ("INT", {"default": 0, "min": 0, "max": 0xffffffffffffffff}),
+                "control_after_generate": ("COMBO[STRING]", ["fixed", "increment", "decrement", "randomize"]),
+                "denoise_strength": ("FLOAT", {"default": 1.0, "min": 0.0, "max": 1.0, "step": 0.01}),
+                "scheduler": (comfy.samplers.KSampler.SCHEDULERS,),
+                "i2v_mode": ("COMBO[STRING]", ["dynamic", "legacy"]),
+            },
+            "optional": {
+                "audio_embeds": ("LATENT",),
+                "context_options": ("HYVIDCONTEXT",),
+                "feta_args": ("FETAARGS",),
+                "loop_args": ("LOOPARGS",),
+                "tencache_args": ("TEACACHEARGS",),
+                "focasc_args": ("FRESCA_ARGS",),
+                "mask": ("MASK",),
+                "force_offload": ("BOOLEAN", {"default": False}),
+            },
+        }
+
+    RETURN_TYPES = ("LATENT",)
+    FUNCTION = "sample"
+    CATEGORY = "HunyuanVideoWrapper"
+    DESCRIPTION = "Enhanced sampler with HunyuanCustom audio support"
+
+    def sample(
+        self,
+        model,
+        hyid_embeds,
+        samples,
+        image_cond_latents,
+        height,
+        width,
+        num_frames,
+        steps,
+        cfg,
+        seed,
+        control_after_generate,
+        denoise_strength,
+        scheduler,
+        i2v_mode,
+        audio_embeds=None,
+        context_options=None,
+        feta_args=None,
+        loop_args=None,
+        tencache_args=None,
+        focasc_args=None,
+        mask=None,
+        force_offload=False,
+    ):
+
+        actual_model = model["model"]
+        supports_audio = model["supports_audio"]
+
+        if audio_embeds is not None and not supports_audio:
+            log.warning("Audio input provided, but the loaded model does not support audio. Ignoring audio.")
+            audio_embeds = None
+
+        audio_condition = audio_embeds is not None
+
+        pipe_kwargs = {
+            "height": height,
+            "width": width,
+            "video_length": num_frames,
+            "prompt_embed_dict": hyid_embeds,
+            "num_inference_steps": steps,
+            "guidance_scale": cfg,
+            "generator": torch.Generator(device=mm.get_torch_device()).manual_seed(seed),
+            "latents": samples,
+            "image_cond_latents": image_cond_latents,
+            "denoise_strength": denoise_strength,
+            "scheduler": scheduler,
+            "i2v_stability": i2v_mode == "stability",
+            "context_options": context_options,
+            "feta_args": feta_args,
+            "loop_args": loop_args,
+            "teacache_args": tencache_args,
+            "fresca_args": focasc_args,
+            "mask_latents": mask,
+            "audio_embeds": audio_embeds,
+            "audio_condition": audio_condition,
+        }
+
+        result = actual_model["pipe"](**pipe_kwargs)
+        if isinstance(result, dict) and "samples" in result:
+            result = result["samples"]
+
+        new_seed = comfy.utils.get_next_seed(seed, control_after_generate)
+        self.last_seed = new_seed
+
+        return (result,)
+
 NODE_CLASS_MAPPINGS = {
     "HyVideoSampler": HyVideoSampler,
     "HyVideoDecode": HyVideoDecode,
@@ -1927,7 +2159,9 @@ NODE_CLASS_MAPPINGS = {
     "HyVideoTextEmbedBridge": HyVideoTextEmbedBridge,
     "HyVideoLoopArgs": HyVideoLoopArgs,
     "HunyuanVideoFresca": HunyuanVideoFresca,
-    "HunyuanVideoSLG": HunyuanVideoSLG
+    "HunyuanVideoSLG": HunyuanVideoSLG,
+    "HyVideoAudioLoader": HyVideoAudioLoader,
+    "HyVideoCustomSampler": HyVideoCustomSampler
     }
 NODE_DISPLAY_NAME_MAPPINGS = {
     "HyVideoSampler": "HunyuanVideo Sampler",
@@ -1958,4 +2192,6 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "HyVideoLoopArgs": "HyVideo Loop Args",
     "HunyuanVideoFresca": "HunyuanVideo Fresca",
     "HunyuanVideoSLG": "HunyuanVideo SLG",
+    "HyVideoAudioLoader": "Load Audio (HunyuanCustom)",
+    "HyVideoCustomSampler": "HunyuanCustom Audio Sampler",
     }
