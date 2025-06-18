@@ -2082,7 +2082,7 @@ class HyVideoCustomSampler:
         width,
         num_frames,
         steps,
-        cfg,
+        embedded_guidance_scale,
         seed,
         control_after_generate,
         denoise_strength,
@@ -2096,11 +2096,13 @@ class HyVideoCustomSampler:
         focasc_args=None,
         mask=None,
         force_offload=False,
-
+        **extra_kwargs,
     ):
 
         actual_model = model["model"]
         supports_audio = model["supports_audio"]
+
+        cfg = float(hyid_embeds.get("cfg", 1.0))
 
         if audio_embeds is not None and not supports_audio:
             log.warning("Audio input provided, but the loaded model does not support audio. Ignoring audio.")
@@ -2118,6 +2120,7 @@ class HyVideoCustomSampler:
             "num_frames": num_frames,
             "inference_steps": steps,
             "guidance_scale": cfg,
+            "embedded_guidance_scale": embedded_guidance_scale,
             "seed": seed,
             "denoise_strength": denoise_strength,
             "scheduler": scheduler,
@@ -2129,10 +2132,11 @@ class HyVideoCustomSampler:
             "focasc_args": focasc_args,
             "mask": mask,
             "force_offload": force_offload,
-
             "audio_embeds": audio_embeds,
             "audio_condition": audio_condition,
         }
+
+        pipe_kwargs.update(extra_kwargs)
 
         result = self.pipe(**pipe_kwargs)
 
