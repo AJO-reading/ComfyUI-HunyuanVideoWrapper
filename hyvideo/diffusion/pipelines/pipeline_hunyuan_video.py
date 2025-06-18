@@ -486,6 +486,7 @@ class HunyuanVideoPipeline(DiffusionPipeline):
         riflex_freq_index: Optional[int] = None,
         i2v_stability=True,
         loop_args: Optional[Dict] = None,
+        audio_conditioning: Optional[Dict] = None,
         **kwargs,
     ):
         r"""
@@ -616,6 +617,7 @@ class HunyuanVideoPipeline(DiffusionPipeline):
                 prompt_embeds_2 = torch.cat([prompt_embeds_2, prompt_embeds_2])
 
         audio_conditioning = audio_embeds if audio_condition else None
+
         # Apply audio conditioning if provided
         prompt_embeds = self.apply_audio_conditioning(prompt_embeds, audio_conditioning)
 

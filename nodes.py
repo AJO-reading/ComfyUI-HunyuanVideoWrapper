@@ -2131,6 +2131,7 @@ class HyVideoCustomSampler:
 
         return (result,)
 
+
 NODE_CLASS_MAPPINGS = {
     "HyVideoSampler": HyVideoSampler,
     "HyVideoDecode": HyVideoDecode,
