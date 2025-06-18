@@ -207,6 +207,24 @@ class HunyuanVideoPipeline(DiffusionPipeline):
             if accepts:
                 extra_step_kwargs[k] = v
         return extra_step_kwargs
+
+    def apply_audio_conditioning(self, prompt_embeds, audio_embeds=None):
+        if audio_embeds is None or not audio_embeds.get("has_audio", False):
+            return prompt_embeds
+        try:
+            audio_features = audio_embeds.get("audio_features")
+            audio_strength = audio_embeds.get("audio_strength", 0.8)
+            if audio_features is None or not hasattr(self.transformer, "audio_net"):
+                return prompt_embeds
+            conditioned = self.transformer.audio_net(
+                audio_features,
+                prompt_embeds,
+                audio_strength if isinstance(audio_strength, float) else audio_strength.item()
+            )
+            return conditioned
+        except Exception as e:
+            logger.error(f"Audio conditioning application failed: {e}")
+            return prompt_embeds
     
     def get_timesteps(self, num_inference_steps, strength, device):
         # get the original timestep using init_timestep
@@ -239,8 +257,9 @@ class HunyuanVideoPipeline(DiffusionPipeline):
         i2v_condition_type=None,
         image_cond_latents=None,
         i2v_stability=True,
-        
+
     ):
+        original_latents = None
         shape = (
             batch_size,
             num_channels_latents,
@@ -254,6 +273,7 @@ class HunyuanVideoPipeline(DiffusionPipeline):
                 f" size of {batch_size}. Make sure the batch size matches the length of the generators."
             )
         if latents is not None:
+            original_latents = latents.clone()
             latents = latents.to(device)
         else:
             original_latents = None
@@ -439,6 +459,8 @@ class HunyuanVideoPipeline(DiffusionPipeline):
         generator: Optional[Union[torch.Generator, List[torch.Generator]]] = None,
         latents: Optional[torch.Tensor] = None,
         mask_latents: Optional[torch.Tensor] = None,
+        audio_embeds: Optional[Dict] = None,
+        audio_condition: bool = False,
         cross_attention_kwargs: Optional[Dict[str, Any]] = None,
         guidance_rescale: float = 0.0,
         clip_skip: Optional[int] = None,
@@ -592,6 +614,10 @@ class HunyuanVideoPipeline(DiffusionPipeline):
             #     prompt_mask = torch.cat([prompt_mask, prompt_mask])
             if prompt_embeds_2 is not None:
                 prompt_embeds_2 = torch.cat([prompt_embeds_2, prompt_embeds_2])
+
+        audio_conditioning = audio_embeds if audio_condition else None
+        # Apply audio conditioning if provided
+        prompt_embeds = self.apply_audio_conditioning(prompt_embeds, audio_conditioning)
 
         prompt_embeds = prompt_embeds.to(device = device, dtype = self.base_dtype)
         #prompt_mask = prompt_mask.to(device)
