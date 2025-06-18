@@ -2127,7 +2127,7 @@ class HyVideoCustomSampler:
             "context_options": context_options,
             "feta_args": feta_args,
             "loop_args": loop_args,
-            "teacache_args": tencache_args,
+            "teacache_args": teacache_args,
             "fresca_args": focasc_args,
             "mask_latents": mask,
             "audio_embeds": audio_embeds,
